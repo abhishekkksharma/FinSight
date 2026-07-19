@@ -1,0 +1,17 @@
+{
+    "Best Model": "Gradient Boosting Regressor",
+    "MAE": 2568.834,
+    "MSE": 21820080.0868,
+    "RMSE": 4671.1969,
+    "R2": 0.9519,
+    "Training Time": 22.9519,
+    "Prediction Time": 0.0134,
+    "Number of Features": 5,
+    "Dataset Size": 20000,
+    "Outlier Counts": {
+        "Income": 1254,
+        "Age": 0,
+        "Dependents": 0,
+        "Total_Expense": 1278
+    }
+}
