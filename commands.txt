@@ -1,0 +1,6 @@
+python -m venv venv
+.\venv\Scripts\activate
+
+Run backend 
+cd src
+python -m uvicorn api:app --reload --host 127.0.0.1 --port 8000
