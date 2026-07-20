@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Any
 
 import joblib
 import pandas as pd
 
-from preprocess import FEATURE_COLUMNS, normalize_prediction_input
-from utils import MODEL_PATH
+try:
+    from .preprocess import FEATURE_COLUMNS, normalize_prediction_input
+    from .utils import CALIBRATION_PATH, MODEL_PATH
+except ImportError:
+    from preprocess import FEATURE_COLUMNS, normalize_prediction_input
+    from utils import CALIBRATION_PATH, MODEL_PATH
 
 
 def load_model(model_path: Path = MODEL_PATH):
@@ -46,7 +51,53 @@ def predict_expense(
     )
     payload = normalize_prediction_input(payload)
     prediction = model.predict(payload)[0]
-    return round(float(prediction), 2)
+    calibrated_prediction = apply_behavioral_calibration(
+        prediction=float(prediction),
+        age=age,
+        dependents=dependents,
+    )
+    return round(float(calibrated_prediction), 2)
+
+
+def load_calibration(path: Path = CALIBRATION_PATH) -> dict[str, Any]:
+    """Load optional behavioral calibration values."""
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+def apply_behavioral_calibration(
+    prediction: float,
+    age: int,
+    dependents: int,
+    calibration_path: Path = CALIBRATION_PATH,
+) -> float:
+    """Apply small empirical adjustments for weak but user-visible features."""
+    calibration = load_calibration(calibration_path)
+    if not calibration:
+        return prediction
+
+    dependent_baseline = float(calibration.get("dependent_baseline", 0.0))
+    dependent_effect = float(calibration.get("dependent_effect_per_person", 0.0))
+    dependent_adjustment = (dependents - dependent_baseline) * dependent_effect
+    age_adjustment = float(
+        calibration.get("age_band_offsets", {}).get(get_age_band(age), 0.0)
+    )
+    return max(0.0, prediction + dependent_adjustment + age_adjustment)
+
+
+def get_age_band(age: int) -> str:
+    """Return the configured age band label for calibration."""
+    if age <= 25:
+        return "18-25"
+    if age <= 35:
+        return "26-35"
+    if age <= 45:
+        return "36-45"
+    if age <= 55:
+        return "46-55"
+    return "56+"
 
 
 def assess_affordability(

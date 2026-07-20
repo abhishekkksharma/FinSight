@@ -1,11 +1,11 @@
 {
-    "Best Model": "Gradient Boosting Regressor",
-    "MAE": 2568.834,
-    "MSE": 21820080.0868,
-    "RMSE": 4671.1969,
-    "R2": 0.9519,
-    "Training Time": 22.9519,
-    "Prediction Time": 0.0134,
+    "Best Model": "Ridge Regression",
+    "MAE": 2813.1398,
+    "MSE": 20759890.3061,
+    "RMSE": 4556.3023,
+    "R2": 0.9542,
+    "Training Time": 12.2643,
+    "Prediction Time": 0.0159,
     "Number of Features": 5,
     "Dataset Size": 20000,
     "Outlier Counts": {

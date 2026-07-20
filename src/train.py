@@ -9,7 +9,7 @@ from typing import Any
 import joblib
 import pandas as pd
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import ElasticNet, LinearRegression, Ridge
 from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.tree import DecisionTreeRegressor
@@ -25,6 +25,7 @@ from preprocess import (
     NUMERICAL_FEATURES,
     TARGET_COLUMN,
     add_target,
+    build_behavioral_calibration,
     build_preprocessor,
     clean_data,
     detect_outliers_iqr,
@@ -33,6 +34,7 @@ from preprocess import (
 )
 from utils import (
     DATA_PATH,
+    CALIBRATION_PATH,
     METRICS_PATH,
     MODEL_PATH,
     OUTPUTS_DIR,
@@ -50,6 +52,8 @@ def build_models() -> dict[str, Any]:
     """Create candidate regression models."""
     models: dict[str, Any] = {
         "Linear Regression": LinearRegression(),
+        "Ridge Regression": Ridge(alpha=10.0),
+        "ElasticNet Regression": ElasticNet(alpha=0.01, l1_ratio=0.2, random_state=42),
         "Decision Tree Regressor": DecisionTreeRegressor(random_state=42),
         "Random Forest Regressor": RandomForestRegressor(
             n_estimators=160,
@@ -128,8 +132,31 @@ def train_and_evaluate_models(
         by=["R2", "RMSE"],
         ascending=[False, True],
     )
-    best_name = str(comparison.iloc[0]["Model"])
+    best_name = select_best_model(comparison)
     return comparison, best_name, fitted_models[best_name]
+
+
+def select_best_model(comparison: pd.DataFrame) -> str:
+    """Select an accurate model while preferring smooth predictions for user inputs."""
+    best_rmse = float(comparison["RMSE"].min())
+    close_models = comparison[comparison["RMSE"] <= best_rmse * 1.03]
+    smooth_priority = [
+        "Ridge Regression",
+        "Linear Regression",
+        "ElasticNet Regression",
+        "Gradient Boosting Regressor",
+        "Random Forest Regressor",
+        "Decision Tree Regressor",
+    ]
+    for model_name in smooth_priority:
+        if model_name in set(close_models["Model"]):
+            LOGGER.info(
+                "Selected %s because it is within 3%% RMSE of the best model and "
+                "gives smoother predictions for age/dependents/city-tier changes.",
+                model_name,
+            )
+            return model_name
+    return str(comparison.iloc[0]["Model"])
 
 
 def tune_best_model(best_model_name: str, pipeline: Pipeline, x_train, y_train) -> Pipeline:
@@ -151,6 +178,15 @@ def tune_best_model(best_model_name: str, pipeline: Pipeline, x_train, y_train) 
         param_grid = {
             "model__max_depth": [None, 8, 12, 20],
             "model__min_samples_split": [2, 5, 10],
+        }
+    elif isinstance(model, Ridge):
+        param_grid = {
+            "model__alpha": [0.1, 1.0, 10.0, 50.0, 100.0],
+        }
+    elif isinstance(model, ElasticNet):
+        param_grid = {
+            "model__alpha": [0.001, 0.01, 0.1],
+            "model__l1_ratio": [0.1, 0.2, 0.5],
         }
     else:
         LOGGER.info("No tuning grid configured for %s. Reusing fitted model.", best_model_name)
@@ -176,6 +212,9 @@ def main() -> None:
     raw_data = load_data(DATA_PATH)
     cleaned_data = clean_data(raw_data)
     model_data = add_target(cleaned_data)
+    behavioral_calibration = build_behavioral_calibration(cleaned_data)
+    save_json(behavioral_calibration, CALIBRATION_PATH)
+    LOGGER.info("Saved behavioral calibration to %s", CALIBRATION_PATH)
     outliers = detect_outliers_iqr(model_data, NUMERICAL_FEATURES + [TARGET_COLUMN])
     LOGGER.info("IQR outlier counts: %s", outliers)
     save_eda_plots(model_data, OUTPUTS_DIR)

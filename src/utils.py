@@ -14,6 +14,7 @@ MODELS_DIR = PROJECT_ROOT / "models"
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
 MODEL_PATH = MODELS_DIR / "best_model.pkl"
 METRICS_PATH = OUTPUTS_DIR / "metrics.json"
+CALIBRATION_PATH = OUTPUTS_DIR / "expense_calibration.json"
 
 
 def configure_logging() -> None:

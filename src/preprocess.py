@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
@@ -203,3 +205,38 @@ def detect_outliers_iqr(data: pd.DataFrame, columns: list[str]) -> dict[str, int
         upper = q3 + 1.5 * iqr
         outliers[column] = int(((series < lower) | (series > upper)).sum())
     return outliers
+
+
+def build_behavioral_calibration(data: pd.DataFrame) -> dict[str, Any]:
+    """Build small empirical adjustments for weak but user-visible features."""
+    calibration_data = add_target(data).dropna(subset=[TARGET_COLUMN])
+    overall_mean = float(calibration_data[TARGET_COLUMN].mean())
+
+    dependent_means = calibration_data.groupby("Dependents")[TARGET_COLUMN].mean()
+    dependent_x = dependent_means.index.astype(float).to_numpy()
+    dependent_y = dependent_means.to_numpy()
+    dependent_slope = 0.0
+    if len(dependent_x) > 1:
+        dependent_slope = float(np.polyfit(dependent_x, dependent_y, deg=1)[0])
+
+    age_bins = [17, 25, 35, 45, 55, 100]
+    age_labels = ["18-25", "26-35", "36-45", "46-55", "56+"]
+    age_band = pd.cut(
+        calibration_data["Age"],
+        bins=age_bins,
+        labels=age_labels,
+        include_lowest=True,
+    )
+    age_offsets = (
+        calibration_data.groupby(age_band, observed=True)[TARGET_COLUMN].mean()
+        - overall_mean
+    )
+
+    return {
+        "dependent_baseline": float(calibration_data["Dependents"].median()),
+        "dependent_effect_per_person": round(dependent_slope, 4),
+        "age_band_offsets": {
+            str(age_band_name): round(float(offset), 4)
+            for age_band_name, offset in age_offsets.items()
+        },
+    }

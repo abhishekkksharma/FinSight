@@ -75,6 +75,10 @@ python src/train.py
 
 Training performs data validation, cleaning, EDA plot generation, model comparison, hyperparameter tuning, final evaluation, and model saving.
 
+The training script intentionally prefers a smooth regularized model when its RMSE is close to the top-scoring tree model. This avoids flat tree-leaf predictions where changing age or dependents may not change the output.
+
+Training also writes `outputs/expense_calibration.json`, which stores small data-derived adjustments for weak but user-visible inputs such as dependents and age band. The prediction script applies these adjustments after the base model prediction.
+
 ## Prediction Example
 
 ```bash
