@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
+
+# Silence Windows Python 3.13 joblib loky wmic warning
+if "LOKY_MAX_CPU_COUNT" not in os.environ:
+    os.environ["LOKY_MAX_CPU_COUNT"] = str(os.cpu_count() or 4)
 
 import joblib
 import pandas as pd
@@ -36,6 +41,13 @@ def predict_expense(
     model_path: Path = MODEL_PATH,
 ) -> float:
     """Predict a user's expected monthly expense."""
+    if income <= 0:
+        raise ValueError("Income must be greater than zero.")
+    if age < 0 or age > 120:
+        raise ValueError("Age must be between 0 and 120.")
+    if dependents < 0:
+        raise ValueError("Dependents cannot be negative.")
+
     model = load_model(model_path)
     payload = pd.DataFrame(
         [
@@ -55,6 +67,7 @@ def predict_expense(
         prediction=float(prediction),
         age=age,
         dependents=dependents,
+        income=income,
     )
     return round(float(calibrated_prediction), 2)
 
@@ -71,6 +84,7 @@ def apply_behavioral_calibration(
     prediction: float,
     age: int,
     dependents: int,
+    income: float = 0.0,
     calibration_path: Path = CALIBRATION_PATH,
 ) -> float:
     """Apply small empirical adjustments for weak but user-visible features."""
@@ -84,7 +98,13 @@ def apply_behavioral_calibration(
     age_adjustment = float(
         calibration.get("age_band_offsets", {}).get(get_age_band(age), 0.0)
     )
-    return max(0.0, prediction + dependent_adjustment + age_adjustment)
+    result = prediction + dependent_adjustment + age_adjustment
+    if income > 0:
+        # Bounded between 5% and 95% of income
+        result = max(income * 0.05, min(result, income * 0.95))
+    else:
+        result = max(0.0, result)
+    return result
 
 
 def get_age_band(age: int) -> str:

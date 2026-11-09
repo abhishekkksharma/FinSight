@@ -4,29 +4,55 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import seaborn as sns
 from sklearn.inspection import permutation_importance
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import learning_curve
 
-from preprocess import TARGET_COLUMN
+try:
+    from .preprocess import TARGET_COLUMN
+except ImportError:
+    from preprocess import TARGET_COLUMN
 
 
 LOGGER = logging.getLogger(__name__)
 sns.set_theme(style="whitegrid")
 
 
-def regression_metrics(y_true: pd.Series, y_pred: pd.Series | list[float]) -> dict[str, float]:
-    """Calculate core regression metrics."""
-    mse = mean_squared_error(y_true, y_pred)
+def regression_metrics(
+    y_true: pd.Series | np.ndarray,
+    y_pred: pd.Series | np.ndarray | list[float],
+) -> dict[str, float]:
+    """Calculate core regression metrics, accuracy percentage, and bounded tolerance scores."""
+    y_true_arr = np.asarray(y_true, dtype=float)
+    y_pred_arr = np.asarray(y_pred, dtype=float)
+
+    mse = float(mean_squared_error(y_true_arr, y_pred_arr))
+    mae = float(mean_absolute_error(y_true_arr, y_pred_arr))
+    rmse = float(mse**0.5)
+    r2 = float(r2_score(y_true_arr, y_pred_arr))
+
+    safe_y_true = np.where(np.abs(y_true_arr) == 0, 1.0, np.abs(y_true_arr))
+    relative_errors = np.abs(y_true_arr - y_pred_arr) / safe_y_true
+    mape = float(np.mean(relative_errors))
+    accuracy_pct = float(max(0.0, (1.0 - mape) * 100))
+    within_10_pct = float(np.mean(relative_errors <= 0.10) * 100)
+    within_15_pct = float(np.mean(relative_errors <= 0.15) * 100)
+
     return {
-        "MAE": mean_absolute_error(y_true, y_pred),
+        "MAE": mae,
         "MSE": mse,
-        "RMSE": mse**0.5,
-        "R2": r2_score(y_true, y_pred),
+        "RMSE": rmse,
+        "R2": r2,
+        "MAPE": mape,
+        "Accuracy_Pct": accuracy_pct,
+        "Within_10Pct_Accuracy": within_10_pct,
+        "Within_15Pct_Accuracy": within_15_pct,
     }
 
 
@@ -43,6 +69,8 @@ def save_eda_plots(data: pd.DataFrame, output_dir: Path) -> None:
     ]
 
     for column, plot_type, filename in plot_specs:
+        if column not in data.columns:
+            continue
         plt.figure(figsize=(9, 5))
         if plot_type == "hist":
             sns.histplot(data[column], kde=True, bins=35)
@@ -55,37 +83,41 @@ def save_eda_plots(data: pd.DataFrame, output_dir: Path) -> None:
         plt.close()
 
     numeric_data = data.select_dtypes(include=["number"])
-    plt.figure(figsize=(12, 9))
-    sns.heatmap(numeric_data.corr(), cmap="coolwarm", center=0)
-    plt.title("Correlation Heatmap")
-    plt.tight_layout()
-    plt.savefig(output_dir / "correlation_heatmap.png", dpi=150)
-    plt.close()
+    if not numeric_data.empty:
+        plt.figure(figsize=(12, 9))
+        sns.heatmap(numeric_data.corr(), cmap="coolwarm", center=0)
+        plt.title("Correlation Heatmap")
+        plt.tight_layout()
+        plt.savefig(output_dir / "correlation_heatmap.png", dpi=150)
+        plt.close()
 
-    boxplot_columns = ["Income", "Age", "Dependents", TARGET_COLUMN]
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-    for axis, column in zip(axes.flatten(), boxplot_columns):
-        sns.boxplot(y=data[column], ax=axis)
-        axis.set_title(column.replace("_", " "))
-    plt.tight_layout()
-    plt.savefig(output_dir / "boxplots_numerical.png", dpi=150)
-    plt.close()
+    boxplot_columns = [c for c in ["Income", "Age", "Dependents", TARGET_COLUMN] if c in data.columns]
+    if boxplot_columns:
+        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+        for axis, column in zip(axes.flatten(), boxplot_columns):
+            sns.boxplot(y=data[column], ax=axis)
+            axis.set_title(column.replace("_", " "))
+        plt.tight_layout()
+        plt.savefig(output_dir / "boxplots_numerical.png", dpi=150)
+        plt.close()
     LOGGER.info("EDA plots saved to %s", output_dir)
 
 
 def save_prediction_plots(
-    y_true: pd.Series,
-    y_pred: pd.Series | list[float],
+    y_true: pd.Series | np.ndarray,
+    y_pred: pd.Series | np.ndarray | list[float],
     output_dir: Path,
 ) -> None:
     """Save prediction-vs-actual and residual plots."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    residuals = y_true - y_pred
+    y_true_s = pd.Series(y_true).reset_index(drop=True)
+    y_pred_s = pd.Series(y_pred).reset_index(drop=True)
+    residuals = y_true_s - y_pred_s
 
     plt.figure(figsize=(8, 6))
-    sns.scatterplot(x=y_true, y=y_pred, alpha=0.65)
-    lower = min(y_true.min(), min(y_pred))
-    upper = max(y_true.max(), max(y_pred))
+    sns.scatterplot(x=y_true_s, y=y_pred_s, alpha=0.65)
+    lower = min(float(y_true_s.min()), float(y_pred_s.min()))
+    upper = max(float(y_true_s.max()), float(y_pred_s.max()))
     plt.plot([lower, upper], [lower, upper], color="red", linestyle="--")
     plt.xlabel("Actual Monthly Expense")
     plt.ylabel("Predicted Monthly Expense")
@@ -95,7 +127,7 @@ def save_prediction_plots(
     plt.close()
 
     plt.figure(figsize=(8, 6))
-    sns.scatterplot(x=y_pred, y=residuals, alpha=0.65)
+    sns.scatterplot(x=y_pred_s, y=residuals, alpha=0.65)
     plt.axhline(0, color="red", linestyle="--")
     plt.xlabel("Predicted Monthly Expense")
     plt.ylabel("Residual")
@@ -106,20 +138,32 @@ def save_prediction_plots(
 
 
 def save_feature_importance(
-    model,
+    model: Any,
     x_test: pd.DataFrame,
     y_test: pd.Series,
     output_dir: Path,
 ) -> None:
     """Save model feature importance, falling back to permutation importance."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    estimator = model.named_steps["model"]
-    preprocessor = model.named_steps["preprocessor"]
-    feature_names = list(preprocessor.get_feature_names_out())
+    estimator = None
+    preprocessor = None
 
-    if hasattr(estimator, "feature_importances_"):
+    if hasattr(model, "named_steps"):
+        estimator = model.named_steps.get("model")
+        preprocessor = model.named_steps.get("preprocessor")
+    elif hasattr(model, "estimator_"):
+        estimator = model.estimator_
+        preprocessor = getattr(model, "preprocessor_", None)
+
+    feature_names = (
+        list(preprocessor.get_feature_names_out())
+        if preprocessor is not None and hasattr(preprocessor, "get_feature_names_out")
+        else list(x_test.columns)
+    )
+
+    if estimator is not None and hasattr(estimator, "feature_importances_"):
         importances = estimator.feature_importances_
-    elif hasattr(estimator, "coef_"):
+    elif estimator is not None and hasattr(estimator, "coef_"):
         importances = abs(estimator.coef_)
     else:
         result = permutation_importance(
@@ -147,8 +191,9 @@ def save_feature_importance(
     plt.close()
 
 
-def save_learning_curve(model, x: pd.DataFrame, y: pd.Series, output_dir: Path) -> None:
+def save_learning_curve(model: Any, x: pd.DataFrame, y: pd.Series, output_dir: Path) -> None:
     """Save a learning curve using RMSE as the score."""
+    output_dir.mkdir(parents=True, exist_ok=True)
     train_sizes, train_scores, validation_scores = learning_curve(
         model,
         x,
@@ -166,7 +211,7 @@ def save_learning_curve(model, x: pd.DataFrame, y: pd.Series, output_dir: Path) 
     plt.plot(train_sizes, validation_rmse, marker="o", label="Validation RMSE")
     plt.xlabel("Training Examples")
     plt.ylabel("RMSE")
-    plt.title("Learning Curve")
+    plt.title("Learning Curve (Diagnosing Bias vs Variance)")
     plt.legend()
     plt.tight_layout()
     plt.savefig(output_dir / "learning_curve.png", dpi=150)
